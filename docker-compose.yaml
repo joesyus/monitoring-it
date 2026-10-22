@@ -1,0 +1,8 @@
+services:
+  dashboard-tiket:
+    build: .
+    container_name: dashboard-tiket
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8085:8080"   # buka di http://IP-SERVER:8085 (ubah 8085 bila bentrok dengan layanan lain)

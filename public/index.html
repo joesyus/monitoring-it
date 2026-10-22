@@ -1,0 +1,1197 @@
+<!doctype html>
+<!--
+  Monitoring tiket IT: dashboard satu file (tanpa instal, tanpa server).
+
+  CARA PAKAI
+  1. Buka file ini di browser (klik dua kali).
+  2. Seret file JSON/CSV ke halaman, atau klik "Muat data". Bisa pilih beberapa file sekaligus
+     (misalnya satu file per sumber: Watun, ETOffice, OpenProject).
+  3. Mode server: bila disajikan oleh server.js (folder public/), halaman memuat data dari /api/tickets
+     secara otomatis; tombol "Perbarui" memanggil POST /api/refresh lalu memuat ulang.
+     Kredensial API tetap di .env pada server, tidak ada di file ini.
+     Bila /api/tickets tidak ada, dicoba tiket.json di sebelah file ini.
+
+  FORMAT DATA (satu baris = satu tiket)
+  Kolom           Isi
+  id              ID tiket, mis. ETO-562
+  sumber          Watun / ETOffice / OpenProject (boleh kosong bila nama file atau awalan ID menunjukkan sumbernya)
+  judul           Judul tiket
+  pic             Penanggung jawab (boleh kosong)
+  status          Status asli dari sistem; dipetakan otomatis (lihat PEMETAAN_STATUS di bawah)
+  dibuat          Tanggal dibuat: 2026-04-01 atau 01/04/2026
+  selesai         Tanggal selesai/ditutup (kosong bila belum)
+  url             Tautan ke tiket asli (tombol "Buka")
+  JSON boleh berupa array, {"tiket":[...]}, atau {"watun":[...],"etoffice":[...],"openproject":[...]}.
+  CSV boleh berpemisah koma, titik koma, atau tab. Nama kolom Inggris umum (title, assignee, created, closed) juga dikenali.
+
+  PENGATURAN ada di blok KONFIG di bawah.
+-->
+<html lang="id" data-theme="terang">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring tiket IT</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --font:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --bg:#F3F5F9; --surface:#FFFFFF; --surface2:#EEF1F6; --border:#E1E6EF;
+  --text:#0F172A; --text2:#556072;
+  --accent:#4F46E5; --accent-ink:#FFFFFF; --accent-soft:#EEEDFD;
+  --danger:#B42318; --danger-soft:#FDECEA;
+  --ok:#12A150; --ok-ring:rgba(18,161,80,.45);
+  --grid:#E4E9F1;
+  --tip-bg:#0F172A; --tip-text:#F1F5F9; --tip-mute:#A3AEC2;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.05);
+  --shadow-hover:0 2px 4px rgba(15,23,42,.06),0 16px 36px rgba(15,23,42,.11);
+  --c-watun:#3B6FF0; --c-eto:#F08A3C; --c-op:#1FA39A;
+  --s-baru:#8B6CF0; --s-tunggu:#E5A823; --s-kerja:#3B7BF5; --s-lain:#D46FA3;
+  --s-selesai:#2FAE8F; --s-tutup:#8C93A1; --s-batal:#B7BDC9;
+  --radius:18px;
+}
+html[data-theme="gelap"]{
+  --bg:#0D1117; --surface:#161B22; --surface2:#1F2630; --border:#283140;
+  --text:#E6EAF1; --text2:#9AA7BA;
+  --accent:#7C9CFF; --accent-ink:#0B1020; --accent-soft:rgba(124,156,255,.14);
+  --danger:#FF8F86; --danger-soft:rgba(255,143,134,.12);
+  --ok:#3DDC84; --ok-ring:rgba(61,220,132,.4);
+  --grid:#232B37;
+  --tip-bg:#EEF2F8; --tip-text:#0F172A; --tip-mute:#4B5668;
+  --shadow:0 0 0 1px rgba(255,255,255,.02),0 10px 30px rgba(0,0,0,.35);
+  --shadow-hover:0 0 0 1px rgba(124,156,255,.28),0 18px 40px rgba(0,0,0,.5);
+  --c-watun:#5B8CFF; --c-eto:#FF9A52; --c-op:#2DD4BF;
+  --s-selesai:#34C9A2; --s-tutup:#7D8696; --s-batal:#5A6373;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background-color .45s ease,color .45s ease}
+.shell{max-width:1240px;margin:0 auto;padding:clamp(20px,3vw,36px) clamp(16px,3vw,28px) 56px}
+.h1{font-weight:700;letter-spacing:-.02em;margin:0;font-size:clamp(26px,3.4vw,34px);line-height:1.15}
+.sub{margin:6px 0 0;color:var(--text2);font-size:14.5px}
+.h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.cap{margin:2px 0 0;color:var(--text2);font-size:13px}
+.muted{color:var(--text2)}
+.num{font-variant-numeric:tabular-nums}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:clamp(16px,2.4vw,24px);min-width:0;transition:background-color .45s,border-color .45s,box-shadow .3s,transform .3s cubic-bezier(.2,.7,.2,1)}
+.lift:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover)}
+.card-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:12px 16px}
+.row{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:16px}
+.dot{width:9px;height:9px;border-radius:3px;flex:none;display:inline-block}
+.dot.r{border-radius:50%}
+
+@keyframes rise{from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 var(--ok-ring)} 70%{box-shadow:0 0 0 7px rgba(0,0,0,0)} 100%{box-shadow:0 0 0 0 rgba(0,0,0,0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rise{animation:rise .65s cubic-bezier(.2,.7,.2,1) backwards}
+.d1{animation-delay:.04s}.d2{animation-delay:.1s}.d3{animation-delay:.16s}.d4{animation-delay:.22s}.d5{animation-delay:.28s}.d6{animation-delay:.34s}.d7{animation-delay:.4s}
+.spinning{animation:spin .8s linear infinite}
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+
+button{font:inherit}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:20px 32px;margin-bottom:24px}
+.top-l{flex:1 1 420px;min-width:0}
+.top-r{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+.row-r{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:12.5px;color:var(--text2)}
+.chip b{color:var(--text);font-weight:600}
+.live{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 2.2s infinite}
+.live.bad{background:var(--danger);animation:none}
+.health{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.health div{padding:9px 12px;border-radius:10px;font-size:12.5px;background:var(--danger-soft);color:var(--danger);font-weight:500}
+.health div.info{background:var(--accent-soft);color:var(--accent)}
+.note{margin:14px 8px 0;font-size:12.5px;color:var(--text2)}
+.note code{background:var(--surface2);padding:1px 6px;border-radius:6px;font-size:12px}
+.toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px}
+.toggle button{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2);font-weight:600;font-size:12.5px;padding:6px 12px;border-radius:999px;cursor:pointer;transition:background-color .25s,color .25s}
+.toggle button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.toggle button:not([aria-pressed="true"]):hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;cursor:pointer;transition:border-color .2s,color .2s,background-color .45s,transform .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.primary:hover{color:var(--accent-ink);filter:brightness(1.08)}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px}
+.kpi{padding:18px 18px 16px}
+.kpi-top{display:flex;align-items:center;gap:10px;color:var(--text2);font-size:13px;font-weight:500}
+.ico-wrap{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--accent-soft);color:var(--accent)}
+.kpi.danger .ico-wrap{background:var(--danger-soft);color:var(--danger)}
+.kpi-val{font-size:clamp(30px,3vw,38px);font-weight:800;letter-spacing:-.03em;line-height:1.1;margin:14px 0 12px;font-variant-numeric:tabular-nums}
+.kpi.danger .kpi-val{color:var(--danger)}
+.kpi-unit{font-size:.48em;font-weight:600;margin-left:6px;color:var(--text2);letter-spacing:0}
+.bar-track{display:flex;gap:2px;height:6px;border-radius:99px;background:var(--surface2);overflow:hidden}
+.bar-seg{height:100%;width:0;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.go .bar-seg{width:var(--w)}
+.kpi-cap{display:flex;justify-content:space-between;gap:8px;margin-top:10px;font-size:12.5px;color:var(--text2)}
+
+.legend{display:flex;flex-wrap:wrap;gap:6px}
+.leg{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text);background:var(--surface2);border:1px solid transparent;padding:5px 11px 5px 9px;border-radius:99px;cursor:pointer;transition:opacity .2s,background-color .45s,border-color .2s}
+.leg:hover{border-color:var(--border)}
+.leg[aria-pressed="false"]{opacity:.5;text-decoration:line-through}
+.plot-outer{position:relative;margin:34px 0 0;padding-left:40px}
+.plot{position:relative;height:240px}
+.gl{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--grid)}
+.gl.solid{border-top-style:solid}
+.y-lab{position:absolute;left:-40px;top:-9px;width:32px;text-align:right;font-size:11.5px;color:var(--text2);font-variant-numeric:tabular-nums}
+.cols{position:absolute;left:0;right:0;top:0;bottom:0;display:flex}
+.bar-col{flex:1 1 0;min-width:0;height:100%;position:relative;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;appearance:none;background:none;border:0;padding:0;margin:0;color:inherit;cursor:default;border-radius:10px}
+.bar-col:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.bar{display:flex;flex-direction:column-reverse;width:56%;max-width:60px;transition:opacity .25s,filter .25s}
+.seg{display:block;width:100%;height:0;transition:height .9s cubic-bezier(.2,.8,.2,1)}
+.go .seg{height:var(--h)}
+.tot{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px;font-variant-numeric:tabular-nums;opacity:0;transition:opacity .5s .55s}
+.go .tot{opacity:1}
+.cols:hover .bar-col:not(:hover) .bar{opacity:.45}
+.bar-col:hover .bar{filter:brightness(1.07)}
+.tip{position:absolute;opacity:0;transform:translateY(6px);pointer-events:none;background:var(--tip-bg);color:var(--tip-text);border-radius:12px;padding:10px 12px;min-width:150px;text-align:left;box-shadow:0 12px 30px rgba(0,0,0,.25);z-index:6;transition:opacity .18s,transform .18s;white-space:nowrap;display:flex;flex-direction:column;gap:5px}
+.tip-r{left:calc(50% + 38px)}
+.tip-l{right:calc(50% + 38px)}
+.bar-col:hover .tip,.bar-col:focus-visible .tip{opacity:1;transform:translateY(0)}
+.tip-title{font-weight:700;font-size:12.5px;margin-bottom:2px}
+.tip-line{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.tip-line span:nth-child(2){flex:1}
+.tip-v{font-weight:700;font-variant-numeric:tabular-nums}
+.tip-total{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;font-weight:700;border-top:1px solid var(--tip-mute);padding-top:6px;margin-top:2px}
+.x-row{display:flex;margin:10px 0 0 40px}
+.x-row span{flex:1 1 0;text-align:center;font-size:12px;color:var(--text2)}
+
+.donut-wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:20px 28px;margin-top:22px}
+.donut{position:relative;width:200px;height:200px;flex:none}
+.donut svg{width:100%;height:100%;display:block}
+.arc{stroke-dasharray:0 440;stroke-dashoffset:var(--off);transition:stroke-dasharray 1.1s cubic-bezier(.2,.8,.2,1),stroke-width .25s,opacity .25s;cursor:pointer}
+.go .arc{stroke-dasharray:var(--len) 440}
+.arc.dim{opacity:.28}
+.arc.on{stroke-width:30}
+.donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.donut-n{font-size:36px;font-weight:800;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.donut-l{font-size:12px;color:var(--text2);margin-top:4px}
+.srcs{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:2px}
+.src-row{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 12px;border-radius:12px;color:inherit;cursor:pointer;transition:background-color .2s}
+.src-row:hover,.src-row:focus-visible{background:var(--surface2)}
+.src-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.src-name{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14.5px}
+.src-cnt{font-weight:700;font-variant-numeric:tabular-nums}
+.src-sub{display:block;margin:2px 0 0 19px;font-size:12.5px;color:var(--text2)}
+.src-bar{display:block;height:4px;border-radius:99px;background:var(--surface2);margin:8px 0 0 19px;overflow:hidden}
+.src-fill{display:block;height:100%;width:0;border-radius:99px;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.go .src-fill{width:var(--w)}
+
+.grp-h{display:flex;justify-content:space-between;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin:20px 0 6px;padding:0 8px}
+.st-row{display:grid;grid-template-columns:92px minmax(0,1fr) 44px 56px;align-items:center;gap:12px;padding:7px 8px;border-radius:10px;transition:background-color .2s}
+.st-row:hover{background:var(--surface2)}
+.st-name{display:flex;align-items:center;gap:8px}
+.st-track{display:block;height:10px;border-radius:99px;background:var(--surface2);overflow:hidden;transition:background-color .2s}
+.st-row:hover .st-track{background:var(--surface)}
+.st-fill{display:block;height:100%;width:0;border-radius:99px;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.go .st-fill{width:var(--w)}
+.st-n{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.st-p{text-align:right;color:var(--text2);font-size:12px;font-variant-numeric:tabular-nums}
+
+.tools{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid transparent;border-radius:10px;padding:0 12px;height:38px;min-width:230px;color:var(--text2);transition:border-color .2s,background-color .3s}
+.tools:focus-within{border-color:var(--accent);background:var(--surface)}
+.tools input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;color:var(--text)}
+.tools input::placeholder{color:var(--text2)}
+.t-scroll{overflow-x:auto;margin:16px -6px 0;padding:0 6px}
+.t-grid{min-width:860px}
+.t-row{display:grid;grid-template-columns:108px minmax(190px,2.2fr) minmax(150px,1.4fr) 118px 112px minmax(120px,1fr) 78px;gap:16px;align-items:center;padding:12px 14px;border-radius:12px;transition:background-color .2s}
+.t-head{font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.02em;padding-top:4px;padding-bottom:10px;border-bottom:1px solid var(--border);border-radius:0}
+.t-body .t-row:hover{background:var(--surface2)}
+.th-btn{display:inline-flex;align-items:center;gap:4px;font-weight:700;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+.th-btn:hover{color:var(--text)}
+.chev{transition:transform .25s,opacity .2s;flex:none;opacity:.35}
+.tt{font-weight:600}
+.tp{display:flex;align-items:center;gap:10px;min-width:0}
+.tid{font-weight:700;font-size:12.5px;padding:3px 8px;border-radius:7px;background:var(--accent-soft);color:var(--accent);display:inline-block;width:fit-content}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;border:1px solid var(--border);font-size:12px;font-weight:600;width:fit-content}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-size:11px;font-weight:700;flex:none}
+.link{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-weight:600;text-decoration:none;padding:4px 0}
+.link:hover{text-decoration:underline}
+.age{display:flex;align-items:baseline;gap:6px}
+.age b{font-size:15px}
+.age.late b{color:var(--danger)}
+.age-bar{height:4px;border-radius:99px;background:var(--surface2);margin-top:6px;overflow:hidden}
+.age-fill{height:100%;width:0;border-radius:99px;background:var(--accent);transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.late + .age-bar .age-fill{background:var(--danger)}
+.go .age-fill{width:var(--w)}
+.t-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--text2);margin-top:12px;padding:0 2px}
+.t-empty{padding:32px 14px;text-align:center;color:var(--text2)}
+
+.count{font-size:12.5px;font-weight:600;color:var(--text2);background:var(--surface2);padding:4px 12px;border-radius:99px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.filters .tools{flex:1 1 240px}
+.sel-wrap{position:relative;display:inline-flex;align-items:center;color:var(--text2)}
+.sel{appearance:none;-webkit-appearance:none;height:38px;border-radius:10px;border:1px solid transparent;background:var(--surface2);color:var(--text);font:inherit;padding:0 34px 0 12px;cursor:pointer;transition:border-color .2s,background-color .3s}
+.sel:hover,.sel:focus-visible{border-color:var(--accent);outline:none}
+.sel option{background:var(--surface);color:var(--text)}
+.sel-chev{position:absolute;right:11px;pointer-events:none}
+.all-scroll{max-height:520px;overflow:auto;margin:16px -6px 0;padding:0 6px;border-radius:12px}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;font-variant-numeric:tabular-nums}
+.tbl th{position:sticky;top:0;z-index:2;background:var(--surface);text-align:left;color:var(--text2);font-weight:700;font-size:12px;padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap;transition:background-color .45s}
+.tbl td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top;transition:background-color .15s}
+.tbl tbody tr:hover td{background:var(--surface2)}
+.tbl th.r,.tbl td.r{text-align:right}
+.tbl th.r .th-btn{flex-direction:row-reverse}
+.tbl td.late{color:var(--danger);font-weight:700}
+.src-tag{display:inline-flex;align-items:center;gap:7px;font-weight:600;white-space:nowrap}
+@media (max-width:560px){.hide-n{display:none}}
+
+.empty{max-width:640px;margin:48px auto;text-align:center;padding:40px 28px}
+.empty .ico{width:56px;height:56px;border-radius:16px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;margin:0 auto 16px}
+.empty details{margin-top:20px;text-align:left;font-size:13px;color:var(--text2)}
+.empty summary{cursor:pointer;font-weight:600;color:var(--text)}
+.empty code{background:var(--surface2);padding:1px 6px;border-radius:6px;font-size:12.5px}
+.drop{position:fixed;inset:0;background:color-mix(in srgb,var(--accent) 14%,transparent);border:3px dashed var(--accent);z-index:50;display:grid;place-items:center;font-size:20px;font-weight:700;color:var(--accent);pointer-events:none}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);background:var(--tip-bg);color:var(--tip-text);padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:60;max-width:calc(100vw - 32px)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="top rise">
+    <div class="top-l">
+      <h1 class="h1">Monitoring tiket IT</h1>
+      <p class="sub" id="sub">Memuat data…</p>
+      <div class="chips" id="chips"></div>
+      <div class="health" id="health"></div>
+    </div>
+    <div class="top-r">
+      <div class="toggle" role="group" aria-label="Tema tampilan">
+        <button type="button" data-tema="terang" aria-pressed="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Terang</button>
+        <button type="button" data-tema="gelap" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>Gelap</button>
+      </div>
+      <div class="row-r">
+        <span class="muted" id="updated" style="font-size:12.5px"></span>
+        <button type="button" class="btn" id="btnLoad">Muat data</button>
+        <button type="button" class="btn" id="btnRefresh"><svg id="icoRefresh" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>Perbarui</button>
+      </div>
+    </div>
+  </header>
+
+  <input type="file" id="file" accept=".json,.csv,.txt,application/json,text/csv" multiple hidden>
+
+  <section class="card empty" id="empty" hidden>
+    <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></div>
+    <h2 class="h2" style="font-size:20px">Belum ada data tiket</h2>
+    <p class="cap" style="font-size:14px;margin:8px 0 20px">Seret file JSON atau CSV ke halaman ini, atau pilih file hasil ekspor dari Watun, ETOffice, dan OpenProject.</p>
+    <button type="button" class="btn primary" id="btnPick">Pilih file…</button>
+    <details>
+      <summary>Format kolom yang dibaca</summary>
+      <p>Satu baris per tiket dengan kolom <code>id</code>, <code>sumber</code>, <code>judul</code>, <code>pic</code>, <code>status</code>, <code>dibuat</code>, <code>selesai</code>, <code>url</code>. Kolom <code>sumber</code> boleh kosong bila nama file memuat watun, etoffice, atau openproject. Tanggal: <code>2026-04-01</code> atau <code>01/04/2026</code>. Detail lengkap ada di komentar di bagian atas file ini.</p>
+    </details>
+  </section>
+
+  <main id="main" hidden>
+    <section class="kpis" id="kpis" aria-label="Ringkasan"></section>
+
+    <section class="row">
+      <div class="card rise d3" id="cChart" style="flex:7 1 520px">
+        <div class="card-head">
+          <div>
+            <h2 class="h2">Tiket per bulan</h2>
+            <p class="cap" id="chartCap"></p>
+          </div>
+          <div class="legend" id="legend" role="group" aria-label="Tampilkan atau sembunyikan sumber"></div>
+        </div>
+        <div class="plot-outer"><div class="plot" id="plot"></div></div>
+        <div class="x-row" id="xrow" aria-hidden="true"></div>
+      </div>
+
+      <div class="card rise d4" id="cDonut" style="flex:5 1 360px">
+        <h2 class="h2">Per sumber</h2>
+        <p class="cap">Jumlah tiket, yang masih aktif, dan durasi rata-rata</p>
+        <div class="donut-wrap">
+          <div class="donut" id="donut"></div>
+          <div class="srcs" id="srcs"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="row">
+      <div class="card rise d5" id="cStatus" style="flex:5 1 360px">
+        <h2 class="h2">Status seragam</h2>
+        <p class="cap">Status ketiga sistem dipetakan ke status yang sama</p>
+        <div id="status"></div>
+      </div>
+
+      <div class="card rise d6" id="cTable" style="flex:7 1 520px">
+        <div class="card-head" style="align-items:center">
+          <div>
+            <h2 class="h2">Tiket aktif tertua</h2>
+            <p class="cap" id="tableCap"></p>
+          </div>
+          <label class="tools">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 1 0 0-14ZM21 21l-4.3-4.3"/></svg>
+            <input type="text" id="search" aria-label="Cari tiket" placeholder="Cari tiket atau PIC" autocomplete="off">
+          </label>
+        </div>
+        <div class="t-scroll">
+          <div class="t-grid" role="table" aria-label="Tiket aktif tertua">
+            <div role="row" class="t-row t-head" id="thead">
+              <div role="columnheader" data-col="kode"><button type="button" class="th-btn" data-sort="kode">Kode tiket<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div role="columnheader" data-col="judul"><button type="button" class="th-btn" data-sort="judul">Judul<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div role="columnheader">PIC</div>
+              <div role="columnheader">Status</div>
+              <div role="columnheader" data-col="dibuat"><button type="button" class="th-btn" data-sort="dibuat">Dibuat<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div role="columnheader" data-col="umur"><button type="button" class="th-btn" data-sort="umur">Umur (hari)<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></div>
+              <div role="columnheader">Tiket asli</div>
+            </div>
+            <div class="t-body" role="rowgroup" id="tbody"></div>
+          </div>
+        </div>
+        <div class="t-foot"><span id="tfoot"></span><span>Klik judul kolom untuk mengurutkan</span></div>
+      </div>
+    </section>
+    <section class="row">
+      <div class="card rise d7" id="cAll" style="flex:1 1 100%">
+        <div class="card-head" style="align-items:center">
+          <div>
+            <h2 class="h2">Semua tiket</h2>
+            <p class="cap">Cari, saring, dan urutkan. Klik judul kolom untuk mengurutkan.</p>
+          </div>
+          <span class="count" id="allCount"></span>
+        </div>
+        <div class="filters">
+          <label class="tools">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 1 0 0-14ZM21 21l-4.3-4.3"/></svg>
+            <input type="search" id="fq" aria-label="Cari tiket" placeholder="Cari kode tiket, judul, PIC, kategori" autocomplete="off">
+          </label>
+          <span class="sel-wrap"><select class="sel" id="fsrc" aria-label="Sumber"></select><svg class="sel-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span class="sel-wrap"><select class="sel" id="fst" aria-label="Status"></select><svg class="sel-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+          <button type="button" class="btn" id="fReset" hidden>Reset</button>
+        </div>
+        <div class="all-scroll">
+          <table class="tbl" id="tAll" aria-label="Semua tiket">
+            <thead><tr id="allHead"></tr></thead>
+            <tbody id="allBody"></tbody>
+          </table>
+        </div>
+        <div class="t-empty" id="allEmpty" hidden>Tidak ada tiket yang cocok.</div>
+        <div class="t-foot"><span id="allFoot"></span><button type="button" class="btn" id="allMore" hidden>Tampilkan lebih banyak</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="drop" id="drop" hidden>Lepaskan file di sini</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+/* ===================== KONFIG: ubah di sini ===================== */
+const KONFIG = {
+  hariLewat: 7,                 // batas "lebih dari N hari"
+  jumlahBulan: 6,               // jumlah bulan di grafik
+  api: '/api/tickets',          // endpoint data dari server.js
+  apiRefresh: '/api/refresh',   // POST: minta server menarik data terbaru
+  pollMenit: 2,                 // cek data baru dari server tiap N menit (0 = mati)
+  autoMuat: ['tiket.json'],     // cadangan bila endpoint di atas tidak ada
+  statusAktif: ['Baru', 'Menunggu', 'Dikerjakan', 'Lainnya'], // status yang dihitung "masih aktif"
+  tampilTertua: 10              // jumlah tiket di tabel "aktif tertua"
+};
+
+// Urutan dan warna sumber
+const SUMBER = [
+  { k: 'watun', nama: 'Watun', warna: 'var(--c-watun)' },
+  { k: 'eto', nama: 'ETOffice', warna: 'var(--c-eto)' },
+  { k: 'op', nama: 'OpenProject', warna: 'var(--c-op)' }
+];
+
+// Status seragam (urutan tampil). Status yang tidak dikenali masuk "Lainnya".
+const STATUS = [
+  { n: 'Baru', w: 'var(--s-baru)' },
+  { n: 'Menunggu', w: 'var(--s-tunggu)' },
+  { n: 'Dikerjakan', w: 'var(--s-kerja)' },
+  { n: 'Lainnya', w: 'var(--s-lain)' },
+  { n: 'Selesai', w: 'var(--s-selesai)' },
+  { n: 'Ditutup', w: 'var(--s-tutup)' },
+  { n: 'Batal', w: 'var(--s-batal)' }
+];
+
+// Pemetaan status asli -> status seragam. Dicocokkan dari atas ke bawah; tambahkan aturan sesuai kebutuhan.
+const PEMETAAN_STATUS = [
+  [/batal|cancel|reject|tolak/i, 'Batal'],
+  [/tutup|close/i, 'Ditutup'],
+  [/selesai|resolv|done|complete|finish/i, 'Selesai'],
+  [/kerja|progress|proses|doing|develop|sedang/i, 'Dikerjakan'],
+  [/tunggu|wait|hold|pending|tunda/i, 'Menunggu'],
+  [/^\s*(baru|new|open|to ?do)\s*$/i, 'Baru']
+];
+
+// Nama kolom yang dikenali (huruf kecil, tanpa spasi/garis bawah)
+const ALIAS = {
+  id: ['id', 'no', 'nomor', 'kode', 'idtiket', 'ticketid', 'ticket', 'key'],
+  sumber: ['sumber', 'source', 'sistem', 'system', 'aplikasi'],
+  judul: ['judul', 'title', 'subject', 'subjek', 'ringkasan', 'summary'],
+  pic: ['pic', 'assignee', 'assignedto', 'ditugaskan', 'penanggungjawab', 'petugas'],
+  status: ['status', 'state'],
+  dibuat: ['dibuat', 'created', 'createdat', 'createdon', 'tanggaldibuat', 'tanggal', 'createddate'],
+  selesai: ['selesai', 'closed', 'closedat', 'resolved', 'resolvedat', 'tanggalselesai', 'ditutup', 'closeddate', 'completedat'],
+  url: ['url', 'link', 'tiketasli', 'tautan'],
+  kategori: ['kategori', 'category', 'jenis', 'tipe', 'type']
+};
+/* ================================================================= */
+
+const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const BLN_PENUH = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const PLOT = 240;
+const KEY_API = { watun: 'WTN', eto: 'ETO', op: 'OP' }; // kode sumber di server.js
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (n, d = 0) => Number(n).toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
+const ICON = {
+  ticket: 'M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2ZM13 5v2M13 11v2M13 17v2',
+  activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
+  check: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20ZM9 12l2 2 4-4',
+  clock: 'M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20ZM12 6v6l4 2',
+  alert: 'M21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3ZM12 9v4M12 17h.01'
+};
+
+const state = {
+  rows: [],
+  mode: null,        // 'api' | 'file'
+  info: null,        // status tiap sumber dari server
+  updatedAt: null,   // waktu data terakhir ditarik server
+  data: null,
+  hidden: new Set(),
+  sortKey: 'umur',
+  sortDir: 'desc',
+  q: '',
+  fq: '',            // tabel "Semua tiket": pencarian
+  fsrc: '',          // filter sumber
+  fst: '',           // filter status
+  allKey: 'dibuat',
+  allDir: -1,
+  limit: 200         // jumlah baris yang digambar; tombol "Tampilkan lebih banyak" menambah
+};
+
+/* ---------- membaca data ---------- */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/, 1)[0] || '';
+  const cnt = (ch) => first.split(ch).length - 1;
+  const delim = [',', ';', '\t'].sort((a, b) => cnt(b) - cnt(a))[0];
+  const rows = [];
+  let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i++; } else q = false;
+      } else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === delim) { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some((x) => x !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur);
+  if (row.some((x) => x !== '')) rows.push(row);
+  if (!rows.length) return [];
+  const head = rows.shift().map((h) => h.trim());
+  return rows.map((r) => {
+    const o = {};
+    head.forEach((h, i) => { o[h] = r[i] === undefined ? '' : r[i]; });
+    return o;
+  });
+}
+
+function deteksiSumber(v) {
+  const s = String(v || '').toLowerCase();
+  if (/watun/.test(s)) return 'watun';
+  if (/etoffice|et office|\beto\b|eto[-_ ]/.test(s)) return 'eto';
+  if (/openproject|open project|(^|[^a-z])op([^a-z]|$)/.test(s)) return 'op';
+  return null;
+}
+
+function tgl(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return isNaN(v) ? null : v;
+  const s = String(v).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+function statusSeragam(raw) {
+  const s = String(raw || '').trim();
+  for (const [re, nama] of PEMETAAN_STATUS) if (re.test(s)) return nama;
+  return 'Lainnya';
+}
+
+function ambilKolom(r) {
+  const peta = {};
+  Object.keys(r).forEach((k) => { peta[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = r[k]; });
+  const out = {};
+  Object.keys(ALIAS).forEach((f) => {
+    for (const a of ALIAS[f]) if (peta[a] !== undefined && peta[a] !== null) { out[f] = peta[a]; break; }
+  });
+  return out;
+}
+
+function normalisasi(rows, sumberDefault) {
+  const out = [];
+  let lewat = 0;
+  rows.forEach((r) => {
+    if (!r || typeof r !== 'object') { lewat++; return; }
+    const g = ambilKolom(r);
+    const id = String(g.id == null ? '' : g.id).trim();
+    const judul = String(g.judul == null ? '' : g.judul).trim();
+    let sumber = deteksiSumber(g.sumber) || sumberDefault;
+    if (!sumber) { if (/^eto/i.test(id)) sumber = 'eto'; else if (/^op/i.test(id)) sumber = 'op'; }
+    if ((!id && !judul) || !sumber) { lewat++; return; }
+    out.push({
+      id: id || '—',
+      kode: id || '—',
+      kategori: String(g.kategori == null ? '' : g.kategori).trim(),
+      sumber: sumber,
+      judul: judul || '(tanpa judul)',
+      pic: String(g.pic == null ? '' : g.pic).trim(),
+      status: statusSeragam(g.status),
+      asli: String(g.status == null ? '' : g.status).trim(),
+      dibuat: tgl(g.dibuat),
+      selesai: tgl(g.selesai),
+      url: /^https?:\/\//i.test(String(g.url || '').trim()) ? String(g.url).trim() : ''
+    });
+  });
+  return { rows: out, lewat: lewat };
+}
+
+// Respons /api/tickets dari server.js -> baris tiket. Status dari server sudah seragam.
+function dariApi(j) {
+  const peta = { WTN: 'watun', ETO: 'eto', OP: 'op' };
+  const rows = [];
+  let lewat = 0;
+  (j.tickets || []).forEach((t) => {
+    const sumber = peta[t.source];
+    if (!sumber) { lewat++; return; }
+    rows.push({
+      id: String(t.id || '—'),
+      kode: String(t.kode || t.id || '—'),
+      kategori: String(t.category || '').trim(),
+      hari: typeof t.days === 'number' ? t.days : undefined,
+      sumber: sumber,
+      judul: String(t.title || '(tanpa judul)'),
+      pic: String(t.pic || '').trim(),
+      status: STATUS.some((s) => s.n === t.status) ? t.status : statusSeragam(t.status),
+      asli: String(t.status_asli || t.status || ''),
+      dibuat: tgl(t.created),
+      selesai: tgl(t.done),
+      url: /^https?:\/\//i.test(String(t.link || '').trim()) ? String(t.link).trim() : ''
+    });
+  });
+  return { rows: rows, lewat: lewat };
+}
+
+function bacaTeks(teks, namaFile) {
+  const nama = namaFile || '';
+  const defNama = deteksiSumber(nama.replace(/\.[a-z0-9]+$/i, ''));
+  const t = teks.replace(/^﻿/, '').trim();
+  if (!t) return { rows: [], lewat: 0 };
+  if (t[0] === '[' || t[0] === '{') {
+    const j = JSON.parse(t);
+    if (Array.isArray(j)) return normalisasi(j, defNama);
+    let hasil = { rows: [], lewat: 0 };
+    const gabung = (x) => { hasil.rows = hasil.rows.concat(x.rows); hasil.lewat += x.lewat; };
+    Object.keys(j).forEach((k) => {
+      if (Array.isArray(j[k])) gabung(normalisasi(j[k], deteksiSumber(k) || defNama));
+    });
+    return hasil;
+  }
+  return normalisasi(parseCSV(t), defNama);
+}
+
+async function muatFile(files) {
+  let semua = [], lewat = 0, gagal = [];
+  for (const f of files) {
+    try {
+      const h = bacaTeks(await f.text(), f.name);
+      semua = semua.concat(h.rows);
+      lewat += h.lewat;
+    } catch (e) {
+      gagal.push(f.name);
+    }
+  }
+  if (!semua.length) {
+    toast(gagal.length ? 'File tidak bisa dibaca: ' + gagal.join(', ') : 'Tidak ada baris tiket yang valid di file tersebut.');
+    return;
+  }
+  state.rows = semua;
+  state.mode = 'file';
+  state.info = null;
+  state.updatedAt = null;
+  state.hidden.clear();
+  let pesan = fmt(semua.length) + ' tiket dimuat dari ' + (files.length - gagal.length) + ' file.';
+  if (lewat) pesan += ' ' + fmt(lewat) + ' baris dilewati (sumber tidak dikenali atau kosong).';
+  if (gagal.length) pesan += ' Gagal: ' + gagal.join(', ') + '.';
+  toast(pesan);
+  tampil(true);
+}
+
+async function autoMuat() {
+  // 1) endpoint server.js (kredensial API ada di server, bukan di halaman ini)
+  try {
+    const r = await fetch(KONFIG.api, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    if (r.status === 401) {
+      toast('Login diperlukan. Muat ulang halaman lalu masukkan username dan password.');
+    } else if (r.ok) {
+      const j = await r.json();
+      if (j && Array.isArray(j.tickets)) {
+        const h = dariApi(j);
+        return { rows: h.rows, mode: 'api', info: j.sources || null, updated: j.updated || null };
+      }
+    }
+  } catch (e) { /* tidak ada server atau endpoint: coba cadangan */ }
+  // 2) cadangan: tiket.json di sebelah file ini
+  let semua = [], ada = false;
+  for (const u of KONFIG.autoMuat) {
+    try {
+      const r = await fetch(u + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) continue;
+      const h = bacaTeks(await r.text(), u);
+      semua = semua.concat(h.rows);
+      ada = true;
+    } catch (e) { /* abaikan */ }
+  }
+  return ada ? { rows: semua, mode: 'file', info: null, updated: null } : null;
+}
+
+/* ---------- perhitungan ---------- */
+function hitung(rows) {
+  const now = new Date();
+  const hariIni = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const aktifSet = new Set(KONFIG.statusAktif);
+  const tglSaja = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  rows.forEach((r) => {
+    r.aktif = aktifSet.has(r.status);
+    // hari: dari server bila ada (sama dengan dashboard lama), selain itu dihitung dari tanggal
+    if (typeof r.hari !== 'number') {
+      r.hari = r.dibuat ? Math.max(0, Math.round((tglSaja(r.selesai || hariIni) - tglSaja(r.dibuat)) / 864e5)) : null;
+    }
+    r.umur = r.aktif ? r.hari : null;
+    r.durasi = (r.selesai && r.status !== 'Batal') ? r.hari : null;
+  });
+  const total = rows.length;
+  const aktif = rows.filter((r) => r.aktif).length;
+  const selesai = rows.filter((r) => r.status === 'Selesai' || r.status === 'Ditutup').length;
+  const lewat = rows.filter((r) => r.aktif && r.umur != null && r.umur > KONFIG.hariLewat).length;
+  const rata = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const avg = rata(rows.filter((r) => r.durasi != null).map((r) => r.durasi));
+
+  const perSumber = SUMBER.map((s) => {
+    const rs = rows.filter((r) => r.sumber === s.k);
+    return {
+      k: s.k, nama: s.nama, warna: s.warna,
+      total: rs.length,
+      aktif: rs.filter((r) => r.aktif).length,
+      avg: rata(rs.filter((r) => r.durasi != null).map((r) => r.durasi))
+    };
+  });
+
+  const bulan = [];
+  for (let i = KONFIG.jumlahBulan - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    bulan.push({ y: d.getFullYear(), m: d.getMonth(), s: BLN[d.getMonth()], penuh: BLN_PENUH[d.getMonth()] + ' ' + d.getFullYear(), v: { watun: 0, eto: 0, op: 0 } });
+  }
+  rows.forEach((r) => {
+    if (!r.dibuat) return;
+    const b = bulan.find((x) => x.y === r.dibuat.getFullYear() && x.m === r.dibuat.getMonth());
+    if (b) b.v[r.sumber]++;
+  });
+
+  const hitStatus = {};
+  STATUS.forEach((s) => { hitStatus[s.n] = 0; });
+  rows.forEach((r) => { hitStatus[r.status]++; });
+  const asliLain = {};
+  rows.forEach((r) => {
+    if (r.status === 'Lainnya') { const a = r.asli || '(kosong)'; asliLain[a] = (asliLain[a] || 0) + 1; }
+  });
+
+  const tertua = rows.filter((r) => r.aktif && r.dibuat)
+    .sort((a, b) => a.dibuat - b.dibuat)
+    .slice(0, KONFIG.tampilTertua);
+
+  return { total, aktif, selesai, lewat, avg, perSumber, bulan, hitStatus, asliLain, tertua };
+}
+
+/* ---------- tampilan ---------- */
+function replay(el) {
+  el.classList.remove('go');
+  void el.offsetWidth;
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('go')));
+}
+
+function countUp(root) {
+  const diam = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  root.querySelectorAll('.cnt').forEach((el) => {
+    const to = +el.dataset.to, dec = +(el.dataset.dec || 0);
+    el.textContent = fmt(to, dec);
+    if (diam) return;
+    const t0 = performance.now(), dur = 1100;
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      el.textContent = fmt(to * e, dec);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function svgIcon(d) {
+  return '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
+}
+
+function tampil(animasi) {
+  const D = state.data = hitung(state.rows);
+  const ada = state.rows.length > 0;
+  $('#btnLoad').hidden = state.mode === 'api';
+  $('#empty').hidden = ada;
+  $('#main').hidden = !ada;
+  if (!ada) {
+    $('#sub').textContent = state.mode === 'api'
+      ? 'Server belum punya data tiket. Cek status sumber di bawah, lalu klik Perbarui.'
+      : 'Belum ada data. Muat file JSON atau CSV untuk memulai.';
+    $('#chips').innerHTML = '';
+    $('#updated').textContent = '';
+    renderHealth();
+    return;
+  }
+  $('#sub').textContent = fmt(D.aktif) + ' tiket masih aktif dari ' + fmt(D.total) + ' tiket; ' + fmt(D.lewat) + ' di antaranya sudah lebih dari ' + KONFIG.hariLewat + ' hari.';
+  $('#chips').innerHTML = D.perSumber.map((s) => {
+    const i = state.info && state.info[KEY_API[s.k]];
+    const bad = !!i && i.ok === false;
+    return '<span class="chip"' + (bad && i.error ? ' title="' + esc(i.error) + '"' : '') + '><span class="live' + (bad ? ' bad' : '') + '" aria-hidden="true"></span>' + esc(s.nama) + ': <b>' + fmt(s.total) + ' tiket</b></span>';
+  }).join('');
+  renderHealth();
+  const waktu = state.updatedAt ? new Date(state.updatedAt) : new Date();
+  $('#updated').textContent = 'Diperbarui ' + waktu.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  $('#chartCap').textContent = 'Jumlah tiket dibuat, per sumber (' + KONFIG.jumlahBulan + ' bulan terakhir)';
+  renderKpi(D);
+  renderChart(D);
+  renderDonut(D);
+  renderStatus(D);
+  renderTable();
+  renderAll();
+  ['#kpis', '#cChart', '#cDonut', '#cStatus', '#cTable', '#cAll'].forEach((s) => replay($(s)));
+  countUp($('#main'));
+}
+
+function renderHealth() {
+  const info = state.info;
+  let h = '';
+  if (info) {
+    SUMBER.forEach((s) => {
+      const i = info[KEY_API[s.k]];
+      if (i && i.ok === false) {
+        h += '<div role="alert">' + esc(s.nama) + ' gagal dimuat: ' + esc(i.error || 'penyebab tidak diketahui') + '. ' +
+          (i.count ? 'Menampilkan data terakhir yang berhasil (' + fmt(i.count) + ' tiket).' : 'Belum ada data dari sumber ini.') + '</div>';
+      }
+    });
+    if (SUMBER.some((s) => info[KEY_API[s.k]] && info[KEY_API[s.k]].mock)) {
+      h += '<div class="info">Mode contoh (MOCK=true): data di bawah bukan data asli.</div>';
+    }
+  }
+  $('#health').innerHTML = h;
+}
+
+function renderKpi(D) {
+  const pct = (a, b) => b ? (a / b) * 100 : 0;
+  const items = [
+    { l: 'Total tiket', v: D.total, dec: 0, unit: '', cap: 'Semua sumber', meta: SUMBER.length + ' sumber', icon: ICON.ticket,
+      segs: D.perSumber.map((s) => ({ w: pct(s.total, D.total), c: s.warna })) },
+    { l: 'Masih aktif', v: D.aktif, dec: 0, unit: '', cap: 'Baru, menunggu, dikerjakan', meta: fmt(pct(D.aktif, D.total), 1) + '% dari total', icon: ICON.activity,
+      segs: [{ w: pct(D.aktif, D.total), c: 'var(--accent)' }] },
+    { l: 'Selesai atau ditutup', v: D.selesai, dec: 0, unit: '', cap: 'Semua waktu', meta: fmt(pct(D.selesai, D.total), 1) + '% dari total', icon: ICON.check,
+      segs: [{ w: pct(D.selesai, D.total), c: 'var(--s-selesai)' }] },
+    { l: 'Rata-rata durasi', v: D.avg, dec: 1, unit: 'hari', cap: 'Dari dibuat sampai selesai', meta: 'batas ' + KONFIG.hariLewat + ' hari', icon: ICON.clock,
+      segs: [{ w: D.avg == null ? 0 : Math.min(100, pct(D.avg, KONFIG.hariLewat)), c: 'var(--accent)' }] },
+    { l: 'Aktif lebih dari ' + KONFIG.hariLewat + ' hari', v: D.lewat, dec: 0, unit: '', cap: 'Perlu ditindaklanjuti', meta: fmt(pct(D.lewat, D.aktif), 1) + '% dari aktif', icon: ICON.alert, danger: true,
+      segs: [{ w: pct(D.lewat, D.aktif), c: 'var(--danger)' }] }
+  ];
+  $('#kpis').innerHTML = items.map((k, i) =>
+    '<div class="card lift kpi rise d' + (i + 1) + (k.danger ? ' danger' : '') + '">' +
+      '<div class="kpi-top"><span class="ico-wrap">' + svgIcon(k.icon) + '</span><span>' + esc(k.l) + '</span></div>' +
+      '<div class="kpi-val">' + (k.v == null ? '–' : '<span class="cnt" data-to="' + k.v + '" data-dec="' + k.dec + '">' + fmt(k.v, k.dec) + '</span>') +
+        (k.unit && k.v != null ? '<span class="kpi-unit">' + k.unit + '</span>' : '') + '</div>' +
+      '<div class="bar-track" aria-hidden="true">' + k.segs.map((s) => '<div class="bar-seg" style="--w:' + s.w.toFixed(2) + '%;background:' + s.c + '"></div>').join('') + '</div>' +
+      '<div class="kpi-cap"><span>' + esc(k.cap) + '</span><span>' + esc(k.meta) + '</span></div>' +
+    '</div>').join('');
+}
+
+function niceMax(v) {
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000];
+  let step = steps[steps.length - 1];
+  for (const s of steps) if (v / s <= 5) { step = s; break; }
+  return { step: step, max: step * Math.max(1, Math.ceil(v / step)) };
+}
+
+function renderChart(D) {
+  $('#legend').innerHTML = SUMBER.map((s) =>
+    '<button type="button" class="leg" data-leg="' + s.k + '" aria-pressed="' + (!state.hidden.has(s.k)) + '"><span class="dot" style="background:' + s.warna + '"></span>' + esc(s.nama) + '</button>').join('');
+  const vis = SUMBER.filter((s) => !state.hidden.has(s.k));
+  const bulan = D.bulan.map((b) => {
+    const parts = vis.filter((s) => b.v[s.k] > 0);
+    return { b: b, parts: parts, total: parts.reduce((a, s) => a + b.v[s.k], 0) };
+  });
+  const nm = niceMax(Math.max.apply(null, bulan.map((x) => x.total).concat([1])));
+  let h = '';
+  for (let v = 0; v <= nm.max; v += nm.step) {
+    h += '<div class="gl' + (v === 0 ? ' solid' : '') + '" style="bottom:' + (v / nm.max * PLOT) + 'px"><span class="y-lab">' + v + '</span></div>';
+  }
+  h += '<div class="cols">';
+  bulan.forEach((x, i) => {
+    const b = x.b;
+    const barPx = x.total / nm.max * PLOT;
+    const segs = x.parts.map((s, idx) =>
+      '<span class="seg" style="--h:' + (b.v[s.k] / nm.max * PLOT).toFixed(1) + 'px;background:' + s.warna +
+      ';border-radius:' + (idx === x.parts.length - 1 ? '6px 6px 0 0' : '0') +
+      ';box-shadow:' + (idx === 0 ? 'none' : '0 2px 0 var(--surface)') + ';transition-delay:' + (i * 70) + 'ms"></span>').join('');
+    const lines = x.parts.map((s) =>
+      '<span class="tip-line"><span class="dot" style="background:' + s.warna + '"></span><span>' + esc(s.nama) + '</span><span class="tip-v">' + fmt(b.v[s.k]) + '</span></span>').join('');
+    h += '<button type="button" class="bar-col" aria-label="' + esc(b.penuh) + ': total ' + x.total + ' tiket">' +
+      '<span class="tip ' + (i < bulan.length / 2 ? 'tip-r' : 'tip-l') + '" style="bottom:' + Math.max(0, Math.min(barPx - 30, PLOT - 150)) + 'px">' +
+        '<span class="tip-title">' + esc(b.penuh) + '</span>' + lines +
+        '<span class="tip-total"><span>Total</span><span class="num">' + fmt(x.total) + '</span></span></span>' +
+      '<span class="tot">' + (x.total ? fmt(x.total) : '') + '</span><span class="bar">' + segs + '</span></button>';
+  });
+  h += '</div>';
+  $('#plot').innerHTML = h;
+  $('#xrow').innerHTML = D.bulan.map((b) => '<span>' + esc(b.s) + '</span>').join('');
+}
+
+function renderDonut(D) {
+  const C = 2 * Math.PI * 70, GAP = 3;
+  let acc = 0;
+  const arcs = D.perSumber.map((s) => {
+    const frac = D.total ? s.total / D.total : 0;
+    const len = Math.max(0, frac * C - GAP);
+    const off = -(acc * C + GAP / 2);
+    acc += frac;
+    return '<circle class="arc" data-hov="' + s.k + '" cx="100" cy="100" r="70" fill="none" stroke="' + s.warna + '" stroke-width="26" style="--len:' + len.toFixed(2) + ';--off:' + off.toFixed(2) + '"/>';
+  }).join('');
+  const desc = D.perSumber.map((s) => s.nama + ' ' + s.total).join(', ');
+  $('#donut').innerHTML =
+    '<svg viewBox="0 0 200 200" role="img" aria-label="Komposisi ' + D.total + ' tiket per sumber: ' + esc(desc) + '">' +
+      '<circle cx="100" cy="100" r="70" fill="none" stroke="var(--surface2)" stroke-width="26"/>' +
+      '<g transform="rotate(-90 100 100)">' + arcs + '</g></svg>' +
+    '<div class="donut-c"><span class="donut-n" id="dn">' + fmt(D.total) + '</span><span class="donut-l" id="dl">tiket</span></div>';
+  $('#srcs').innerHTML = D.perSumber.map((s) => {
+    const share = D.total ? s.total / D.total * 100 : 0;
+    const avg = s.avg == null ? '–' : fmt(s.avg, 1) + ' hari';
+    const late = s.avg != null && s.avg > KONFIG.hariLewat;
+    return '<button type="button" class="src-row" data-hov="' + s.k + '">' +
+      '<span class="src-top"><span class="src-name"><span class="dot" style="background:' + s.warna + '"></span>' + esc(s.nama) + '</span><span class="src-cnt">' + fmt(s.total) + ' tiket</span></span>' +
+      '<span class="src-sub">' + fmt(s.aktif) + ' aktif · rata-rata <b style="color:' + (late ? 'var(--danger)' : 'var(--text)') + '">' + avg + '</b></span>' +
+      '<span class="src-bar"><span class="src-fill" style="--w:' + share.toFixed(2) + '%;background:' + s.warna + '"></span></span></button>';
+  }).join('');
+}
+
+function setHov(k) {
+  const D = state.data;
+  if (!D) return;
+  document.querySelectorAll('#cDonut .arc').forEach((a) => {
+    a.classList.toggle('dim', !!k && a.dataset.hov !== k);
+    a.classList.toggle('on', a.dataset.hov === k);
+  });
+  const s = k ? D.perSumber.find((x) => x.k === k) : null;
+  const dn = $('#dn'), dl = $('#dl');
+  if (dn) dn.textContent = fmt(s ? s.total : D.total);
+  if (dl) dl.textContent = s ? s.nama : 'tiket';
+}
+
+function renderStatus(D) {
+  const grup = [
+    { t: 'Masih aktif', rows: STATUS.filter((s) => KONFIG.statusAktif.indexOf(s.n) >= 0) },
+    { t: 'Tidak aktif', rows: STATUS.filter((s) => KONFIG.statusAktif.indexOf(s.n) < 0) }
+  ];
+  $('#status').innerHTML = grup.map((g) => {
+    const rows = g.rows.filter((s) => s.n !== 'Lainnya' || D.hitStatus[s.n] > 0);
+    const tot = rows.reduce((a, s) => a + D.hitStatus[s.n], 0);
+    return '<div class="grp-h"><span>' + g.t + '</span><span class="num">' + fmt(tot) + '</span></div>' +
+      rows.map((s) => {
+        const n = D.hitStatus[s.n];
+        const p = tot ? n / tot * 100 : 0;
+        return '<div class="st-row"><span class="st-name"><span class="dot r" style="background:' + s.w + '"></span>' + s.n + '</span>' +
+          '<span class="st-track"><span class="st-fill" style="--w:' + (n ? Math.max(p, 1.5) : 0).toFixed(2) + '%;background:' + s.w + '"></span></span>' +
+          '<span class="st-n">' + fmt(n) + '</span><span class="st-p">' + fmt(p, 1) + '%</span></div>';
+      }).join('');
+  }).join('') + noteLainnya(D);
+}
+
+function noteLainnya(D) {
+  const k = Object.keys(D.asliLain);
+  if (!k.length) return '';
+  const teks = k.sort((a, b) => D.asliLain[b] - D.asliLain[a]).map((a) => esc(a) + ' (' + fmt(D.asliLain[a]) + ')').join(', ');
+  return '<p class="note">“Lainnya” berisi status asli: <b>' + teks + '</b>. Petakan di <code>STATUS_MAP</code> pada server.js bila perlu.</p>';
+}
+
+function fmtTgl(d) {
+  return d ? String(d.getDate()).padStart(2, '0') + ' ' + BLN[d.getMonth()] + ' ' + d.getFullYear() : '–';
+}
+
+function renderTable() {
+  const D = state.data;
+  if (!D) return;
+  const q = state.q.trim().toLowerCase();
+  let list = D.tertua.filter((r) => !q || (r.id + ' ' + r.kode + ' ' + r.judul + ' ' + r.pic + ' ' + r.kategori + ' ' + r.status).toLowerCase().indexOf(q) >= 0);
+  const dir = state.sortDir === 'asc' ? 1 : -1;
+  const key = state.sortKey;
+  list = list.slice().sort((a, b) => {
+    let ka = a[key], kb = b[key];
+    if (key === 'dibuat') { ka = +ka; kb = +kb; }
+    const c = typeof ka === 'string' ? ka.localeCompare(kb) : ka - kb;
+    return c * dir;
+  });
+  const maxUmur = Math.max.apply(null, D.tertua.map((r) => r.umur || 0).concat([1]));
+  const warna = {};
+  STATUS.forEach((s) => { warna[s.n] = s.w; });
+  $('#tbody').innerHTML = list.map((r) => {
+    const ini = r.pic ? r.pic.split(/\s+/).slice(0, 2).map((w) => w.charAt(0)).join('').toUpperCase() : '';
+    const late = r.umur > KONFIG.hariLewat;
+    return '<div role="row" class="t-row">' +
+      '<div role="cell"><span class="tid">' + esc(r.kode) + '</span></div>' +
+      '<div role="cell" class="tt">' + esc(r.judul) + '</div>' +
+      '<div role="cell" class="tp">' + (r.pic ? '<span class="avatar" aria-hidden="true">' + esc(ini) + '</span><span>' + esc(r.pic) + '</span>' : '<span class="muted">Belum ditugaskan</span>') + '</div>' +
+      '<div role="cell"><span class="pill"><span class="dot r" style="background:' + warna[r.status] + '"></span>' + esc(r.status) + '</span></div>' +
+      '<div role="cell" class="num">' + fmtTgl(r.dibuat) + '</div>' +
+      '<div role="cell"><div class="age' + (late ? ' late' : '') + '"><b class="num">' + fmt(r.umur) + '</b><span class="muted" style="font-size:12px">hari</span></div>' +
+        '<div class="age-bar"><div class="age-fill" style="--w:' + (r.umur / maxUmur * 100).toFixed(1) + '%"></div></div></div>' +
+      '<div role="cell">' + (r.url ? '<a class="link" href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" aria-label="Buka tiket asli ' + esc(r.id) + '">Buka<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"/></svg></a>' : '<span class="muted">—</span>') + '</div>' +
+    '</div>';
+  }).join('') + (list.length ? '' : '<div class="t-empty">Tidak ada tiket yang cocok dengan pencarian.</div>');
+  $('#tfoot').textContent = 'Menampilkan ' + list.length + ' dari ' + D.tertua.length + ' tiket aktif tertua';
+  $('#tableCap').textContent = KONFIG.tampilTertua + ' tiket aktif yang paling lama belum selesai';
+  document.querySelectorAll('#thead [data-col]').forEach((c) => {
+    const on = c.dataset.col === state.sortKey;
+    c.setAttribute('aria-sort', on ? (state.sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
+    const ch = c.querySelector('.chev');
+    ch.style.opacity = on ? 1 : .35;
+    ch.style.transform = 'rotate(' + (on && state.sortDir === 'asc' ? 180 : 0) + 'deg)';
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => $('#cTable').classList.add('go')));
+}
+
+const KOLOM_SEMUA = [
+  { k: 'kode', t: 'Kode tiket' },
+  { k: 'sumber', t: 'Sumber' },
+  { k: 'judul', t: 'Judul' },
+  { k: 'kategori', t: 'Kategori', hide: true },
+  { k: 'pic', t: 'PIC', hide: true },
+  { k: 'status', t: 'Status' },
+  { k: 'dibuat', t: 'Dibuat' },
+  { k: 'hari', t: 'Durasi (hari)', r: true },
+  { k: null, t: 'Tiket asli' }
+];
+
+function renderAll() {
+  if (!state.data) return;
+  const sm = {};
+  SUMBER.forEach((s) => { sm[s.k] = s; });
+  const q = state.fq.trim().toLowerCase();
+  let list = state.rows.filter((r) =>
+    (!state.fsrc || r.sumber === state.fsrc) &&
+    (!state.fst || r.status === state.fst) &&
+    (!q || [r.id, r.kode, r.judul, r.pic, r.kategori, sm[r.sumber].nama].join(' ').toLowerCase().indexOf(q) >= 0));
+  const urutStatus = {}, warnaSt = {};
+  STATUS.forEach((s, i) => { urutStatus[s.n] = i; warnaSt[s.n] = s.w; });
+  const nilai = (r, k) => {
+    switch (k) {
+      case 'sumber': return sm[r.sumber].nama;
+      case 'status': return urutStatus[r.status];
+      case 'dibuat': return r.dibuat ? +r.dibuat : 0;
+      case 'hari': return r.hari == null ? -1 : r.hari;
+      default: return String(r[k] == null ? '' : r[k]);
+    }
+  };
+  list = list.slice().sort((a, b) => {
+    const x = nilai(a, state.allKey), y = nilai(b, state.allKey);
+    const c = typeof x === 'number' ? x - y : x.localeCompare(y, 'id', { numeric: true });
+    return (c * state.allDir) || String(a.id).localeCompare(String(b.id), 'id', { numeric: true });
+  });
+  const tampil = list.slice(0, state.limit);
+  $('#allBody').innerHTML = tampil.map((r) => {
+    const s = sm[r.sumber];
+    const late = r.aktif && r.hari > KONFIG.hariLewat;
+    return '<tr>' +
+      '<td><span class="tid">' + esc(r.kode) + '</span></td>' +
+      '<td><span class="src-tag"><span class="dot" style="background:' + s.warna + '"></span>' + esc(s.nama) + '</span></td>' +
+      '<td class="tt">' + esc(r.judul) + '</td>' +
+      '<td class="hide-n">' + (r.kategori ? esc(r.kategori) : '<span class="muted">—</span>') + '</td>' +
+      '<td class="hide-n">' + (r.pic ? esc(r.pic) : '<span class="muted">—</span>') + '</td>' +
+      '<td><span class="pill"><span class="dot r" style="background:' + warnaSt[r.status] + '"></span>' + esc(r.status) + '</span></td>' +
+      '<td class="num">' + fmtTgl(r.dibuat) + '</td>' +
+      '<td class="r num' + (late ? ' late' : '') + '">' + (r.hari == null ? '–' : fmt(r.hari)) + '</td>' +
+      '<td>' + (r.url ? '<a class="link" href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" aria-label="Buka tiket asli ' + esc(r.kode) + '">Buka<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"/></svg></a>' : '<span class="muted">—</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+  const aktifFilter = !!(state.fq || state.fsrc || state.fst);
+  $('#allEmpty').hidden = list.length > 0;
+  $('#fReset').hidden = !aktifFilter;
+  $('#allCount').textContent = fmt(list.length) + (aktifFilter ? ' dari ' + fmt(state.rows.length) : '') + ' tiket';
+  $('#allFoot').textContent = 'Menampilkan ' + fmt(tampil.length) + ' dari ' + fmt(list.length) + ' tiket';
+  $('#allMore').hidden = list.length <= tampil.length;
+  document.querySelectorAll('#allHead th[data-col]').forEach((th) => {
+    const on = th.dataset.col === state.allKey;
+    th.setAttribute('aria-sort', on ? (state.allDir > 0 ? 'ascending' : 'descending') : 'none');
+    const ch = th.querySelector('.chev');
+    ch.style.opacity = on ? 1 : .35;
+    ch.style.transform = 'rotate(' + (on && state.allDir > 0 ? 180 : 0) + 'deg)';
+  });
+}
+
+function siapkanSemua() {
+  $('#allHead').innerHTML = KOLOM_SEMUA.map((c) => c.k
+    ? '<th data-col="' + c.k + '" class="' + (c.r ? 'r ' : '') + (c.hide ? 'hide-n' : '') + '" aria-sort="none"><button type="button" class="th-btn" data-sorta="' + c.k + '">' + c.t +
+      '<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button></th>'
+    : '<th>' + c.t + '</th>').join('');
+  $('#fsrc').innerHTML = '<option value="">Semua sumber</option>' + SUMBER.map((s) => '<option value="' + s.k + '">' + esc(s.nama) + '</option>').join('');
+  $('#fst').innerHTML = '<option value="">Semua status</option>' + STATUS.map((s) => '<option value="' + s.n + '">' + esc(s.n) + '</option>').join('');
+  $('#fq').addEventListener('input', (e) => { state.fq = e.target.value; state.limit = 200; renderAll(); });
+  $('#fsrc').addEventListener('change', (e) => { state.fsrc = e.target.value; state.limit = 200; renderAll(); });
+  $('#fst').addEventListener('change', (e) => { state.fst = e.target.value; state.limit = 200; renderAll(); });
+  $('#fReset').addEventListener('click', () => {
+    state.fq = state.fsrc = state.fst = '';
+    $('#fq').value = ''; $('#fsrc').value = ''; $('#fst').value = '';
+    state.limit = 200;
+    renderAll();
+  });
+  $('#allMore').addEventListener('click', () => { state.limit += 200; renderAll(); });
+  $('#allHead').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sorta]');
+    if (!b) return;
+    const k = b.dataset.sorta;
+    if (state.allKey === k) state.allDir = -state.allDir;
+    else { state.allKey = k; state.allDir = (k === 'dibuat' || k === 'hari') ? -1 : 1; }
+    renderAll();
+  });
+}
+
+/* ---------- interaksi ---------- */
+let toastT;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => t.classList.remove('show'), 4500);
+}
+
+function setTema(t) {
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll('[data-tema]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tema === t)));
+  try { localStorage.setItem('tema-dashboard-tiket', t); } catch (e) { /* abaikan */ }
+}
+
+function terapkan(h) {
+  state.rows = h.rows;
+  state.mode = h.mode;
+  state.info = h.info || null;
+  state.updatedAt = h.updated || null;
+}
+
+async function perbarui() {
+  const ico = $('#icoRefresh');
+  ico.classList.add('spinning');
+  if (state.mode === 'api') {
+    // minta server menarik data terbaru dari Watun, ETOffice, dan OpenProject
+    try {
+      const r = await fetch(KONFIG.apiRefresh, { method: 'POST', cache: 'no-store' });
+      if (r.status === 401) toast('Login diperlukan. Muat ulang halaman lalu masukkan username dan password.');
+      else if (!r.ok) toast('Server gagal menarik data baru (HTTP ' + r.status + '). Menampilkan data terakhir.');
+    } catch (e) {
+      toast('Server tidak bisa dihubungi. Menampilkan data terakhir.');
+    }
+  }
+  const h = await autoMuat();
+  if (h) terapkan(h);
+  else if (state.rows.length && state.mode !== 'api') toast('Tampilan dihitung ulang dari data yang sudah dimuat. Untuk data terbaru, muat file ekspor yang baru.');
+  setTimeout(() => { ico.classList.remove('spinning'); tampil(true); }, 400);
+}
+
+function init() {
+  let tema = 'terang';
+  try {
+    const s = localStorage.getItem('tema-dashboard-tiket');
+    if (s === 'terang' || s === 'gelap') tema = s;
+    else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) tema = 'gelap';
+  } catch (e) { /* abaikan */ }
+  setTema(tema);
+
+  document.querySelectorAll('[data-tema]').forEach((b) => b.addEventListener('click', () => setTema(b.dataset.tema)));
+  $('#btnLoad').addEventListener('click', () => $('#file').click());
+  $('#btnPick').addEventListener('click', () => $('#file').click());
+  $('#btnRefresh').addEventListener('click', perbarui);
+  $('#file').addEventListener('change', (e) => {
+    const fs = Array.from(e.target.files);
+    e.target.value = '';
+    if (fs.length) muatFile(fs);
+  });
+
+  $('#legend').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-leg]');
+    if (!b) return;
+    const k = b.dataset.leg;
+    if (state.hidden.has(k)) state.hidden.delete(k); else state.hidden.add(k);
+    renderChart(state.data);
+    replay($('#cChart'));
+  });
+
+  const cd = $('#cDonut');
+  const hov = (e) => { const el = e.target.closest('[data-hov]'); setHov(el ? el.dataset.hov : null); };
+  cd.addEventListener('mouseover', hov);
+  cd.addEventListener('focusin', hov);
+  cd.addEventListener('mouseleave', () => setHov(null));
+  cd.addEventListener('focusout', () => setHov(null));
+
+  $('#thead').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sort]');
+    if (!b) return;
+    const k = b.dataset.sort;
+    if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    else { state.sortKey = k; state.sortDir = (k === 'umur' || k === 'dibuat') ? 'desc' : 'asc'; }
+    renderTable();
+  });
+  $('#search').addEventListener('input', (e) => { state.q = e.target.value; renderTable(); });
+
+  siapkanSemua();
+
+  let depth = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; $('#drop').hidden = false; });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) $('#drop').hidden = true; });
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    depth = 0;
+    $('#drop').hidden = true;
+    const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (fs.length) muatFile(fs);
+  });
+
+  tampil(false);
+  autoMuat().then((h) => {
+    if (h && (h.rows.length || h.mode === 'api')) { terapkan(h); tampil(true); }
+  });
+  if (KONFIG.pollMenit > 0) {
+    setInterval(async () => {
+      if (state.mode !== 'api') return;
+      const h = await autoMuat();
+      if (h && h.updated && h.updated !== state.updatedAt) { terapkan(h); tampil(true); }
+    }, KONFIG.pollMenit * 60000);
+  }
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+</script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+# Dashboard Tiket IT (Watun + ETOffice + OpenProject)
+
+Satu halaman web untuk memantau progres tiket dari tiga sistem. Hanya untuk melihat: tidak membuat, mengubah, atau menutup tiket.
+
+## Isi folder
+
+| File | Fungsi |
+|---|---|
+| `server.js` | Server kecil: menarik data tiga sumber, menyeragamkan, menyajikan ke halaman |
+| `public/index.html` | Tampilan dashboard (tanpa CDN, jalan tanpa internet) |
+| `data/sample.json` | Data contoh untuk `MOCK=true` |
+| `.env` | Pengaturan dan kunci API (jangan dibagikan) |
+| `docker-compose.yml`, `Dockerfile` | Menjalankan di Docker |
+| `test/smoke.js` | Uji cepat dengan sumber palsu: `node test/smoke.js` |
+
+## 1. Jalankan dulu dengan data contoh
+
+Di container docker (CT 102), dari folder ini:
+
+```bash
+docker compose up -d --build
+docker compose logs -f dashboard-tiket
+```
+
+Buka `http://IP-CT-102:8085`. Port 8085 bisa diubah di `docker-compose.yml` bila bentrok.
+Pada tahap ini `MOCK=true`, jadi yang tampil masih data contoh.
+
+## 2. Sambungkan sumber asli
+
+Edit `.env` (`nano .env`), ubah `MOCK=false`, lalu isi tiap sumber. Sumber yang belum diisi akan tampil "gagal" di bagian atas halaman, sumber lain tetap jalan.
+
+**OpenProject**
+1. Di OpenProject: foto profil > My account > Access tokens > buat API token.
+2. Isi `OPENPROJECT_URL` (tanpa garis miring di akhir) dan `OPENPROJECT_API_KEY`.
+3. Opsional: `OPENPROJECT_PROJECT` untuk membatasi ke satu project.
+4. Tanggal selesai diambil dari waktu pembaruan terakhir tiket yang berstatus Closed/Rejected, jadi hanya perkiraan.
+
+**ETOffice (lewat Google Sheet)**
+1. Buka sheet MONITORINGLIS ETOFFICE > File > Share > Publish to web.
+2. Pilih tab datanya, format CSV, lalu Publish dan salin link-nya ke `ETO_SHEET_CSV_URL`.
+3. Kolom dikenali dari judulnya (Deskripsi, Tanggal Pengajuan, Penanggung jawab, Status, tanggal selesai). Baris tanpa link `ticket-detail/NNN` dilewati.
+4. Catatan: siapa pun yang punya link CSV itu bisa membaca sheet-nya. Kalau isinya sensitif, jangan sebarkan link tersebut.
+
+**Watun**
+1. Isi `WATUN_API_KEY`. Atur `WATUN_AUTH_HEADER` dan `WATUN_AUTH_SCHEME` sesuai dokumentasi API Watun (contoh: header `X-API-Key` dengan skema kosong).
+2. Isi `WATUN_TICKETS_PATH` dengan endpoint daftar tiket. Bila datanya terbagi per halaman, set `WATUN_PAGED=true`.
+3. Nama field di API Watun belum diketahui, jadi `server.js` mencoba beberapa nama umum (`kode_tiket`, `subjek`, `kategori`, `status`, `created_at`, dst.). Untuk memastikan: set `DEBUG=true`, restart, buka `http://IP-CT-102:8085/api/debug/raw/watun`, lihat nama field aslinya, lalu sesuaikan fungsi `mapWatun` di `server.js`. Setelah beres, set `DEBUG=false`.
+
+Setelah mengubah `.env` atau `server.js`:
+
+```bash
+docker compose up -d --build
+```
+
+## Pemetaan status
+
+Ada di bagian `STATUS_MAP` pada `server.js`. Status yang belum dikenal muncul sebagai "Lainnya", tinggal tambahkan barisnya.
+
+## Keamanan
+
+- Isi `BASIC_AUTH_USER` dan `BASIC_AUTH_PASS` bila dashboard bisa dijangkau banyak orang di jaringan.
+- Jangan buka port ini langsung ke internet tanpa reverse proxy dan HTTPS.
+- Dashboard tidak menyimpan data ke disk. Data hanya ada di memori dan ditarik ulang tiap `REFRESH_MINUTES` menit (tombol "Perbarui" menariknya langsung).
